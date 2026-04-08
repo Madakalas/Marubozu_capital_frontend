@@ -134,8 +134,8 @@ export default function UploadFile() {
     try {
       const uploadLimit = result?.rows_inserted != null
         ? Number(result.rows_inserted)
-        : (unprocessedCount != null ? Number(unprocessedCount) : 1000);
-      const limit = Number.isFinite(uploadLimit) && uploadLimit > 0 ? Math.min(uploadLimit, 1000) : 1000;
+        : (unprocessedCount != null ? Number(unprocessedCount) : 10000);
+      const limit = Number.isFinite(uploadLimit) && uploadLimit > 0 ? Math.min(uploadLimit, 10000) : 10000;
       // Commit every row so unprocessed count updates truly live.
       const r = await apiPost(API.processData, { limit, commit_every: 1 });
       if (r.status === 'success') {
