@@ -14,9 +14,10 @@ import { PageHeader, Card, Alert, CodeBlock } from '../components/UI';
 import { COLOR } from '../theme';
 
 export default function UploadFile() {
-  const { assetNames } = useAppCtx();
+  const { assetNames, tfValues } = useAppCtx();
   const [file,         setFile]         = useState(null);
   const [ticker,       setTicker_]      = useState('');
+  const [timeframe,    setTimeframe]    = useState('');
   const [loading,      setLoading]      = useState(false);
   const [processing,   setProcessing]   = useState(false);
   const [result,       setResult]       = useState(null);
@@ -46,6 +47,10 @@ export default function UploadFile() {
     () => (assetNames || []).map(n => String(n).trim()).filter(Boolean),
     [assetNames]
   );
+  const allowedTfSet = useMemo(
+    () => new Set((tfValues || []).map(v => String(v).trim()).filter(Boolean)),
+    [tfValues]
+  );
 
   function validateCsvFile(f) {
     if (!f || !f.name || !f.name.toLowerCase().endsWith('.csv'))
@@ -59,6 +64,46 @@ export default function UploadFile() {
     return String(name).replace(/\.csv$/i, '').trim().toUpperCase();
   }
 
+  function detectTimeframeFromCsv(fileObj) {
+    const SEC_TO_TF = {
+      60: '1min',
+      300: '5min',
+      900: '15min',
+      1800: '30min',
+      3600: '1hour',
+      7200: '2hour',
+      14400: '4hour',
+      28800: '8hour',
+      43200: '12hour',
+      86400: '1day',
+      604800: '1week',
+    };
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onerror = () => reject(new Error('Unable to read CSV file.'));
+      reader.onload = () => {
+        try {
+          const txt = String(reader.result || '');
+          const lines = txt.split(/\r?\n/).filter(Boolean);
+          if (lines.length < 3) throw new Error('CSV needs at least 2 data rows to detect timeframe.');
+          const header = lines[0].split(',').map(s => s.trim());
+          const timeIdx = header.findIndex(h => h.toLowerCase() === 'time');
+          if (timeIdx < 0) throw new Error('CSV missing required "time" column.');
+          const t1 = Number(lines[1].split(',')[timeIdx]);
+          const t2 = Number(lines[2].split(',')[timeIdx]);
+          if (!Number.isFinite(t1) || !Number.isFinite(t2)) throw new Error('Invalid UNIX epoch in time column.');
+          const diff = Math.abs(Math.trunc(t2 - t1));
+          const tf = SEC_TO_TF[diff];
+          if (!tf) throw new Error(`Unsupported timeframe gap in CSV: ${diff} seconds.`);
+          resolve(tf);
+        } catch (e) {
+          reject(e);
+        }
+      };
+      reader.readAsText(fileObj.slice(0, 64 * 1024));
+    });
+  }
+
   const refreshUnprocessed = useCallback(async () => {
     try {
       const res = await fetch(API.unprocessed, { cache: 'no-store' });
@@ -69,7 +114,7 @@ export default function UploadFile() {
     }
   }, []);
 
-  function pickFile(f) {
+  async function pickFile(f) {
     clearSelectSuccessTimer();
     setSelectFileSuccessHighlight(false);
     setResult(null); setProcessResult(null);
@@ -77,6 +122,7 @@ export default function UploadFile() {
     if (!check.ok) {
       setFile(null);
       setTicker_('');
+      setTimeframe('');
       if (fileInputRef.current) fileInputRef.current.value = '';
       setError(check.message);
       return;
@@ -85,27 +131,53 @@ export default function UploadFile() {
     if (!allowedAssetSet.has(inferred)) {
       setFile(null);
       setTicker_('');
+      setTimeframe('');
       if (fileInputRef.current) fileInputRef.current.value = '';
       setError(
         `No asset "${inferred}" (from filename). Add it under Assets & Timeframes, or rename the file to match an existing asset (e.g. BTCUSD.csv).`
       );
       return;
     }
+    let detectedTf = '';
+    try {
+      detectedTf = await detectTimeframeFromCsv(f);
+    } catch (e) {
+      setFile(null);
+      setTicker_('');
+      setTimeframe('');
+      if (fileInputRef.current) fileInputRef.current.value = '';
+      setError(e?.message || 'Could not detect timeframe from CSV.');
+      return;
+    }
+    if (!allowedTfSet.has(detectedTf)) {
+      setFile(null);
+      setTicker_('');
+      setTimeframe('');
+      if (fileInputRef.current) fileInputRef.current.value = '';
+      setError(`Detected timeframe "${detectedTf}" is not in Timeframes. Add it in Assets & Timeframes first.`);
+      return;
+    }
     setFile(f);
     setError('');
     setTicker_(inferred);
+    setTimeframe(detectedTf);
   }
 
   async function handleUpload(e) {
     e.preventDefault();
     if (!file) { setError('CSV file is required'); return; }
-    if (!ticker.trim()) { setError('Select a ticker (asset) from the dropdown.'); return; }
+    if (!ticker.trim()) { setError('Ticker was not detected from filename.'); return; }
+    if (!timeframe.trim()) { setError('Timeframe was not detected from CSV.'); return; }
     const check = validateCsvFile(file);
     if (!check.ok) { setError(check.message); return; }
     const inferred = inferTickerFromFileName(file.name);
     const tUpper = ticker.trim().toUpperCase();
     if (!allowedAssetSet.has(tUpper)) {
       setError(`Ticker "${tUpper}" is not in the Assets list. Add it under Assets & Timeframes first.`);
+      return;
+    }
+    if (!allowedTfSet.has(timeframe)) {
+      setError(`Timeframe "${timeframe}" is not in Timeframes. Add it under Assets & Timeframes first.`);
       return;
     }
     if (inferred !== tUpper) {
@@ -150,6 +222,7 @@ export default function UploadFile() {
         // Clear only the file picker state after processing completes.
         // Keep Upload Result visible until user uploads another file.
         setFile(null);
+        setTimeframe('');
         if (fileInputRef.current) fileInputRef.current.value = '';
       }
       else setProcessError(r.message || 'Processing failed');
@@ -206,7 +279,6 @@ export default function UploadFile() {
   const previewRows = Array.isArray(result?.preview_rows) ? result.preview_rows : [];
   const previewCols = previewRows.length ? Object.keys(previewRows[0]) : [];
 
-  const selectSx = { fontSize: 13, height: 38 };
   const hasUnprocessedRows = unprocessedCount != null && Number(unprocessedCount) > 0;
   const canProcess = processing || hasUnprocessedRows || (rowsToProcessHint != null && rowsToProcessHint > 0);
 
@@ -323,28 +395,44 @@ export default function UploadFile() {
                   <Select
                     fullWidth
                     size="small"
+                    value={ticker || ''}
+                    onChange={() => {}}
                     displayEmpty
-                    value={ticker}
-                    onChange={e => setTicker_(e.target.value)}
-                    sx={selectSx}
-                    renderValue={v => (v ? v : <Typography component="span" color="text.disabled" sx={{ fontSize: 13 }}>Select asset…</Typography>)}
+                    renderValue={(v) => (v ? v : '—')}
                   >
-                    <MenuItem value="" disabled sx={{ fontSize: 13 }}>
-                      Select asset…
-                    </MenuItem>
                     {safeAssets.map(n => (
-                      <MenuItem key={n} value={n} sx={{ fontSize: 13 }}>{n}</MenuItem>
+                      <MenuItem key={n} value={n} disabled sx={{ fontSize: 13 }}>{n}</MenuItem>
                     ))}
                   </Select>
                   <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.75, fontSize: 11 }}>
                     Must match CSV filename (e.g. BTCUSD.csv → BTCUSD).
                   </Typography>
                 </Box>
+                <Box>
+                  <Typography variant="caption" fontWeight={700} sx={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '.06em', color: 'text.secondary', display: 'block', mb: 0.75 }}>
+                    Timeframe (auto)
+                  </Typography>
+                  <Select
+                    fullWidth
+                    size="small"
+                    value={timeframe || ''}
+                    onChange={() => {}}
+                    displayEmpty
+                    renderValue={(v) => (v ? v : '—')}
+                  >
+                    {(tfValues || []).map(v => String(v).trim()).filter(Boolean).map(v => (
+                      <MenuItem key={v} value={v} disabled sx={{ fontSize: 13 }}>{v}</MenuItem>
+                    ))}
+                  </Select>
+                  <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.75, fontSize: 11 }}>
+                    Detected from CSV time column and validated against Timeframes.
+                  </Typography>
+                </Box>
                 <Button
                   type="submit"
                   variant="contained"
                   fullWidth
-                  disabled={!file || loading || !ticker}
+                  disabled={!file || loading || !ticker || !timeframe}
                   startIcon={loading ? <CircularProgress size={16} color="inherit" /> : <UploadFileIcon />}
                   sx={{ mt: 'auto' }}
                 >
