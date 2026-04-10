@@ -53,12 +53,12 @@ export const TF_LABELS = {
 
 export const BB_STATUSES = [
   { value:'any',              label:'Any status' },
-  { value:'closed_below_bbl', label:'Closed below BBL' },
-  { value:'wicked_bbl',       label:'Wicked BBL' },
-  { value:'closed_above_bbu', label:'Closed above BBU' },
-  { value:'wicked_bbu',       label:'Wicked BBU' },
-  { value:'closed_above_bbm', label:'Closed above BBM' },
-  { value:'closed_below_bbm', label:'Closed below BBM' },
+  { value:'Closed Below BBL', label:'Closed below BBL' },
+  { value:'Wicked BBL',       label:'Wicked BBL' },
+  { value:'Closed Above BBU', label:'Closed above BBU' },
+  { value:'Wicked BBU',       label:'Wicked BBU' },
+  { value:'Closed Above BBM', label:'Closed above BBM' },
+  { value:'Closed Below BBM', label:'Closed below BBM' },
 ];
 
 export const fmt = {
